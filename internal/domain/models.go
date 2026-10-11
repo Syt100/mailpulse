@@ -87,3 +87,10 @@ type ProviderError struct {
 }
 
 func (e *ProviderError) Error() string { return e.Code }
+
+type DeliveryError struct {
+	Status, Code string
+	RetryAfter   time.Duration
+}
+
+func (e *DeliveryError) Error() string { return e.Code }
