@@ -5,6 +5,6 @@
 *.db-*
 *.key
 *.sock
-mailpulse
+/mailpulse
 coverage.out
 .env
