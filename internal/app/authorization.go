@@ -33,6 +33,8 @@ type authSession struct {
 	cancel    context.CancelFunc
 }
 type AuthorizationService struct {
+	OnComplete func(string)
+
 	backend  AuthorizationBackend
 	get      func(context.Context, string) (domain.Account, error)
 	mu       sync.Mutex
@@ -77,6 +79,9 @@ func (s *AuthorizationService) Start(ctx context.Context, id string) (Authorizat
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		session.status.State = "complete"
+		if e == nil && s.OnComplete != nil {
+			s.OnComplete(id)
+		}
 		if e != nil {
 			session.status.State = "failed"
 			session.status.ErrorCode = "authorization_failed"
