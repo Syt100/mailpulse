@@ -1,0 +1,44 @@
+name: Go checks
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: go-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting and static checks
+        run: |
+          test -z "$(gofmt -l cmd internal integration)"
+          go vet ./...
+      - run: go test ./...
+      - run: go test -race ./...
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck ./...
+      - name: Build both architectures
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/mailpulse-linux-amd64 ./cmd/mailpulse
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/mailpulse-linux-arm64 ./cmd/mailpulse
+      - name: Native daemon and CLI smoke
+        run: scripts/smoke.sh "$PWD/dist/mailpulse-linux-amd64"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-binaries
+          path: dist/mailpulse-linux-*
+          retention-days: 7
+

@@ -4,6 +4,10 @@
 
 当前开发环境禁止 Unix socket 创建，权限测试遇到内核 EPERM 时明确跳过；Linux CI 必须另外运行守护进程和 CLI 烟测。开发环境没有 Docker，容器健康、指定 UID、只读根文件系统和实际镜像大小需由 CI 验证。
 
+本地已运行 `go vet ./...`、`go test ./...`、`go test -race ./...`，以及 Linux amd64/arm64 的 CGO 关闭编译。`scripts/smoke.sh` 已在本地尝试，在私有 Unix socket 创建阶段受到上述 EPERM 限制，未完成完整烟测。容器测试在未设置 `MAILPULSE_TEST_IMAGE` 时明确跳过，在 CI 中设置该变量后必须执行。
+
+CI 的 Go 检查包含原生守护进程、私有控制、ntfy 发送和重启烟测。容器工作流分别检查 amd64/arm64 镜像漏洞、UID 10001、自定义 UID、只读根目录、健康检查、SIGTERM 和待发队列重启恢复；两种架构均通过后，main/版本标签才能发布镜像。完整结果以开发 PR 上最新提交的检查为准。
+
 ## 用户真机验收
 
 以下项目尚未使用真实账号完成，不能视作已验证：
