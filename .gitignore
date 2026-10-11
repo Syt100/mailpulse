@@ -1,0 +1,10 @@
+.superpowers/
+.worktrees/
+/dist/
+*.db
+*.db-*
+*.key
+*.sock
+/mailpulse
+coverage.out
+.env

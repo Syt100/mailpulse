@@ -1,0 +1,9 @@
+{
+  "data_dir": "/data",
+  "key_file": "/run/secrets/mailpulse_key",
+  "socket": "/data/control.sock",
+  "listen": ":8080",
+  "log_level": "info",
+  "capacity": 10000,
+  "poll_seconds": 60
+}
