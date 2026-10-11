@@ -60,11 +60,11 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** Produces models above; `sqlite.Open(ctx context.Context, path string, capacity int) (*Store, error)`, `app.NewProcessor(store domain.BatchStore) *Processor`, `(*Processor).Process(ctx context.Context, batch domain.Batch, rules []domain.Rule) error`. Store implements CommitBatch and `ClaimDeliveries(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.Delivery, error)`.
 
-- [ ] Write tests TestCommitBatchAtomic, TestCapacityDoesNotAdvanceCursor, TestReplayDoesNotEnqueueTwice, TestBaselineSavesKeysWithoutNotification, TestRulesFirstMatchAND, TestChineseNotification. Assertions: a failed transaction leaves both cursor and job count unchanged; capacity 10000 rejects the next notifying event; duplicate key has one job; baseline has zero jobs; rule order and AND conditions are enforced; default priority equals 3.
-- [ ] Run `go test ./internal/domain ./internal/app ./internal/store/sqlite`; confirm the new behavior is missing before implementation.
-- [ ] Implement migrations, unique keys, bounded transactions and rules. Use one SQLite connection for writes, busy timeout, WAL and explicit transactions. Initialize/close DB safely; set DB directory permissions. Store no message bodies. Processor sanitizes headers, handles empty subjects, generates bounded plain-text notification payloads and ignores non-added events.
-- [ ] Run the same tests; inject a write failure before commit and reopen the file DB to verify rollback and replay. `go test -race ./internal/domain ./internal/app ./internal/store/sqlite` must pass.
-- [ ] Commit `feat: add atomic mail processing and persistent outbox`.
+- [x] Write tests TestCommitBatchAtomic, TestCapacityDoesNotAdvanceCursor, TestReplayDoesNotEnqueueTwice, TestBaselineSavesKeysWithoutNotification, TestRulesFirstMatchAND, TestChineseNotification. Assertions: a failed transaction leaves both cursor and job count unchanged; capacity 10000 rejects the next notifying event; duplicate key has one job; baseline has zero jobs; rule order and AND conditions are enforced; default priority equals 3.
+- [x] Run `go test ./internal/domain ./internal/app ./internal/store/sqlite`; confirm the new behavior is missing before implementation.
+- [x] Implement migrations, unique keys, bounded transactions and rules. Use one SQLite connection for writes, busy timeout, WAL and explicit transactions. Initialize/close DB safely; set DB directory permissions. Store no message bodies. Processor sanitizes headers, handles empty subjects, generates bounded plain-text notification payloads and ignores non-added events.
+- [x] Run the same tests; inject a write failure before commit and reopen the file DB to verify rollback and replay. `go test -race ./internal/domain ./internal/app ./internal/store/sqlite` must pass.
+- [x] Commit `feat: add atomic mail processing and persistent outbox`.
 
 ## Task 2: Account management and encrypted secrets
 
@@ -72,11 +72,11 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** `security.LoadKey(path string) ([]byte, error)`, `security.Encrypt(key, plaintext, associatedData []byte) ([]byte, error)`, `security.Decrypt(key, ciphertext, associatedData []byte) ([]byte, error)`. Store implements SecretStore. `app.NewAccountService(store AccountRepository, secrets domain.SecretStore) *AccountService` exposes Add/List/Pause/Resume/Remove/Resync using typed input/result structs and context.
 
-- [ ] Write TestWrongKeyFailsClosed, TestAccountSecretsBoundToAccountID, TestSecretsAbsentFromAccountJSON, TestPausePreservesState, TestRemoveRequiresExplicitConfirmation, TestResyncRequiresIgnoreHistory, TestResyncPreservesOutbox. Assert decrypt fails with a wrong key or account ID; account list has no secret fields; pause leaves cursors/outbox unchanged; resync clears baseline/processed identifiers but retains existing queued jobs.
-- [ ] Run `go test ./internal/security ./internal/app ./internal/store/sqlite` and record expected failures.
-- [ ] Implement 32-byte key loading and random nonce AES-GCM with account ID as associated data. Init creates a key only for a new store using exclusive creation and mode 0600; existing stores verify an encrypted key-check record before workers start. Encrypt IMAP credentials, ntfy token and per-account MSAL caches. Validate provider settings and rule priorities. Pause stops scanning while queued jobs may continue sending; removal deletes account data including queued jobs only after explicit confirmation.
-- [ ] Verify tests and inspect serialized DTOs and error logs for leaks; migrations must be idempotent.
-- [ ] Commit `feat: manage accounts and encrypt credentials`.
+- [x] Write TestWrongKeyFailsClosed, TestAccountSecretsBoundToAccountID, TestSecretsAbsentFromAccountJSON, TestPausePreservesState, TestRemoveRequiresExplicitConfirmation, TestResyncRequiresIgnoreHistory, TestResyncPreservesOutbox. Assert decrypt fails with a wrong key or account ID; account list has no secret fields; pause leaves cursors/outbox unchanged; resync clears baseline/processed identifiers but retains existing queued jobs.
+- [x] Run `go test ./internal/security ./internal/app ./internal/store/sqlite` and record expected failures.
+- [x] Implement 32-byte key loading and random nonce AES-GCM with account ID as associated data. Init creates a key only for a new store using exclusive creation and mode 0600; existing stores verify an encrypted key-check record before workers start. Encrypt IMAP credentials, ntfy token and per-account MSAL caches. Validate provider settings and rule priorities. Pause stops scanning while queued jobs may continue sending; removal deletes account data including queued jobs only after explicit confirmation.
+- [x] Verify tests and inspect serialized DTOs and error logs for leaks; migrations must be idempotent.
+- [x] Commit `feat: manage accounts and encrypt credentials`.
 
 ## Task 3: ntfy sender, retries and recovery
 
@@ -84,11 +84,11 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** `ntfy.NewClient(baseURL, topic string, tokenSource func(context.Context) (string, error), client *http.Client) (*Client, error)`; Client implements Publisher. `app.NewDeliveryService(store DeliveryRepository, publisher domain.Publisher) *DeliveryService`, `(*DeliveryService).Run(ctx context.Context, concurrency int) error`.
 
-- [ ] Write TestUTF8JSONPublish, TestRetryAfter429, TestTransientRetries, TestAuthFailureBlocksUntilConfigurationChanges, TestPermanentFailureIsInspectable, TestRestartRecoversLease, TestSentPayloadPrunedAfterSevenDays. Assert token stays in the Authorization header; 401/403 do not hot-loop; 429 cannot retry before Retry-After; a failed publish never marks sent; expired lease becomes eligible; pending jobs are never pruned.
-- [ ] Run `go test ./internal/notify/ntfy ./internal/app ./internal/store/sqlite` and confirm failures.
-- [ ] Implement bounded JSON payload publication, request timeouts and no cross-origin authenticated redirects. Parse Retry-After seconds and HTTP dates; exponential backoff with jitter and injected clock/randomness for tests. Claim jobs with persisted leases, mark sent only after accepted response, expose failed jobs and explicit retry. Keep response bodies out of errors/logs; run cleanup on bounded intervals.
-- [ ] Verify recovery with a file DB and simulated HTTP timeout after server acceptance; document potential duplicate delivery. Run race tests.
-- [ ] Commit `feat: publish durable ntfy notifications with retry`.
+- [x] Write TestUTF8JSONPublish, TestRetryAfter429, TestTransientRetries, TestAuthFailureBlocksUntilConfigurationChanges, TestPermanentFailureIsInspectable, TestRestartRecoversLease, TestSentPayloadPrunedAfterSevenDays. Assert token stays in the Authorization header; 401/403 do not hot-loop; 429 cannot retry before Retry-After; a failed publish never marks sent; expired lease becomes eligible; pending jobs are never pruned.
+- [x] Run `go test ./internal/notify/ntfy ./internal/app ./internal/store/sqlite` and confirm failures.
+- [x] Implement bounded JSON payload publication, request timeouts and no cross-origin authenticated redirects. Parse Retry-After seconds and HTTP dates; exponential backoff with jitter and injected clock/randomness for tests. Claim jobs with persisted leases, mark sent only after accepted response, expose failed jobs and explicit retry. Keep response bodies out of errors/logs; run cleanup on bounded intervals.
+- [x] Verify recovery with a file DB and simulated HTTP timeout after server acceptance; document potential duplicate delivery. Run race tests.
+- [x] Commit `feat: publish durable ntfy notifications with retry`.
 
 ## Task 4: Gmail and QQ IMAP adapter
 
@@ -96,11 +96,11 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** `imap.NewProvider(secrets domain.SecretStore, dialer Dialer) *Provider` implements domain.Provider. Dialer isolates go-imap library types from application services.
 
-- [ ] Write TestReadOnlyBaseline, TestUIDScanIncludesReadMail, TestUIDValidityChanged, TestIdleDisconnectBackfills, TestNoIdleFallsBackToPoll, TestUnorderedUIDs, TestMalformedMIMESubject. Assert initial baseline emits no notification; scans use UID not UNSEEN; no STORE/body fetch is issued; FETCH reads only metadata; UID validity change returns needs_resync; interrupted IDLE reconnects and finds missed UIDs without duplicates.
-- [ ] Run `go test ./internal/providers/imap` against a local TLS IMAP server and verify failures before coding.
-- [ ] Implement TLS certificate verification, read-only INBOX selection, UIDNEXT-based first baseline, bounded UID batches and header decoding. Filter returned UIDs greater than persisted high-water explicitly (IMAP reversed UID ranges can include old messages). Preserve original cursor until CommitBatch succeeds. End IDLE periodically, serialize commands per connection, cancel waits immediately on shutdown and retry with jitter.
-- [ ] Verify tests, including empty inbox, deleted last UID, login failure and cancel during IDLE. Run race tests.
-- [ ] Commit `feat: watch Gmail and QQ using read-only IMAP`.
+- [x] Write TestReadOnlyBaseline, TestUIDScanIncludesReadMail, TestUIDValidityChanged, TestIdleDisconnectBackfills, TestNoIdleFallsBackToPoll, TestUnorderedUIDs, TestMalformedMIMESubject. Assert initial baseline emits no notification; scans use UID not UNSEEN; no STORE/body fetch is issued; FETCH reads only metadata; UID validity change returns needs_resync; interrupted IDLE reconnects and finds missed UIDs without duplicates.
+- [x] Run `go test ./internal/providers/imap` against a local TLS IMAP server and verify failures before coding.
+- [x] Implement TLS certificate verification, read-only INBOX selection, UIDNEXT-based first baseline, bounded UID batches and header decoding. Filter returned UIDs greater than persisted high-water explicitly (IMAP reversed UID ranges can include old messages). Preserve original cursor until CommitBatch succeeds. End IDLE periodically, serialize commands per connection, cancel waits immediately on shutdown and retry with jitter.
+- [x] Verify tests, including empty inbox, deleted last UID, login failure and cancel during IDLE. Run race tests.
+- [x] Commit `feat: watch Gmail and QQ using read-only IMAP`.
 
 ## Task 5: Outlook device authorization and Graph Delta
 
@@ -108,12 +108,12 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** `graph.NewProvider(tokens TokenSource, client *http.Client) *Provider` implements domain.Provider. `TokenSource.AccessToken(ctx context.Context, accountID string) (string, error)`. `(*AuthorizationService).Start(ctx context.Context, accountID string) (AuthorizationStart, error)`, `(*AuthorizationService).Status(ctx context.Context, sessionID string) (AuthorizationStatus, error)`; Start returns only initiating CLI's verification URL/code/expiry/session ID, Status returns progress without tokens.
 
-- [ ] Write TestDeviceFlowIsExplicitAndCancellable, TestTwoAccountCacheIsolation, TestRefreshPersistsBeforeUse, TestGraphInitialPaginationSilent, TestGraphPageReplay, TestDeltaExpiredNeedsResync, TestMaliciousNextLink, TestGraphRedirectDoesNotLeakToken, TestIgnoreRemovedAndStateChanges. Assert 60-second default polling; every page has ImmutableId preference; initial pages save identifiers and zero jobs; crashed second page resumes without duplicates; cross-host links are rejected before request; unauthorized identity cannot overwrite another account cache.
-- [ ] Run `go test ./internal/providers/graph ./internal/app` with fake token and Graph servers, confirming failures.
-- [ ] Implement MSAL public-client device flow and encrypted per-account cache, consumers authority and scopes from constraints. Bind the returned identity to the account's stable MSAL account identity; do not parse Microsoft access-token claims. Serialize refresh, persist cache changes before accepting tokens, redact all error details. Authorization runs as a cancellable background session with expiry, so other workers continue.
-- [ ] Implement changeType=created Delta with selected basic fields; follow opaque validated links and preserve case-sensitive IDs. Initial full synchronization sets baseline only at final deltaLink. Ignore removed/state-only entries even if returned by a filtered request; use processed identifier to suppress previously seen items. Return needs_resync on invalid state and respect throttling.
-- [ ] Verify tests, including cache write failure, mixed removed entries, empty pages with nextLink and repeated pages. Run race tests.
-- [ ] Commit `feat: authorize personal Outlook and track Graph changes`.
+- [x] Write TestDeviceFlowIsExplicitAndCancellable, TestTwoAccountCacheIsolation, TestRefreshPersistsBeforeUse, TestGraphInitialPaginationSilent, TestGraphPageReplay, TestDeltaExpiredNeedsResync, TestMaliciousNextLink, TestGraphRedirectDoesNotLeakToken, TestIgnoreRemovedAndStateChanges. Assert 60-second default polling; every page has ImmutableId preference; initial pages save identifiers and zero jobs; crashed second page resumes without duplicates; cross-host links are rejected before request; unauthorized identity cannot overwrite another account cache.
+- [x] Run `go test ./internal/providers/graph ./internal/app` with fake token and Graph servers, confirming failures.
+- [x] Implement MSAL public-client device flow and encrypted per-account cache, consumers authority and scopes from constraints. Bind the returned identity to the account's stable MSAL account identity; do not parse Microsoft access-token claims. Serialize refresh, persist cache changes before accepting tokens, redact all error details. Authorization runs as a cancellable background session with expiry, so other workers continue.
+- [x] Implement changeType=created Delta with selected basic fields; follow opaque validated links and preserve case-sensitive IDs. Initial full synchronization sets baseline only at final deltaLink. Ignore removed/state-only entries even if returned by a filtered request; use processed identifier to suppress previously seen items. Return needs_resync on invalid state and respect throttling.
+- [x] Verify tests, including cache write failure, mixed removed entries, empty pages with nextLink and repeated pages. Run race tests.
+- [x] Commit `feat: authorize personal Outlook and track Graph changes`.
 
 ## Task 6: Supervisor, local control and health
 
@@ -121,12 +121,12 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** `runtime.NewSupervisor(accounts AccountRepository, providers map[string]domain.Provider, processor *app.Processor, deliveries *app.DeliveryService) *Supervisor`, `(*Supervisor).Run(ctx context.Context) error`. `control.NewServer(path string, services Services) *Server`, `health.Handler(probe Probe) http.Handler`.
 
-- [ ] Write TestOneAccountFailureIsIsolated, TestSecondDaemonRejected, TestControlSocketPermissions, TestDiskFailureDoesNotAdvanceCursor, TestShutdownRecoversInFlightJob, TestHealthAllowsAccountAuthFailure, TestReadyReportsStoppedSender, TestAuthorizationDoesNotBlockScans.
-- [ ] Run `go test ./internal/runtime ./internal/transport/control ./internal/transport/http` to verify failures.
-- [ ] Implement an exclusive OS-backed database lock; safe stale socket handling only after acquiring lock; socket permission 0600 and bounded JSON requests. Supervisor owns per-account serial workers, immediate configuration changes and status. On needs_resync/auth_required pause automatic scan until corrected; queue full marks degraded without advancing cursor. Start four sender workers; handle SIGTERM with cancellation and a bounded grace period.
-- [ ] Implement /healthz for main loop plus DB accessibility and /readyz for operational scheduler/sender, without exposing account identifiers. Listen on :8080 inside container; manage only over Unix socket. Reject oversized or malformed control messages; session completion is polled rather than held in an HTTP call.
-- [ ] Verify integration tests with two providers and a slow authorization session; run race tests.
-- [ ] Commit `feat: supervise accounts and expose private controls`.
+- [x] Write TestOneAccountFailureIsIsolated, TestSecondDaemonRejected, TestControlSocketPermissions, TestDiskFailureDoesNotAdvanceCursor, TestShutdownRecoversInFlightJob, TestHealthAllowsAccountAuthFailure, TestReadyReportsStoppedSender, TestAuthorizationDoesNotBlockScans.
+- [x] Run `go test ./internal/runtime ./internal/transport/control ./internal/transport/http` to verify failures.
+- [x] Implement an exclusive OS-backed database lock; safe stale socket handling only after acquiring lock; socket permission 0600 and bounded JSON requests. Supervisor owns per-account serial workers, immediate configuration changes and status. On needs_resync/auth_required pause automatic scan until corrected; queue full marks degraded without advancing cursor. Start four sender workers; handle SIGTERM with cancellation and a bounded grace period.
+- [x] Implement /healthz for main loop plus DB accessibility and /readyz for operational scheduler/sender, without exposing account identifiers. Listen on :8080 inside container; manage only over Unix socket. Reject oversized or malformed control messages; session completion is polled rather than held in an HTTP call.
+- [x] Verify integration tests with two providers and a slow authorization session; run race tests.
+- [x] Commit `feat: supervise accounts and expose private controls`.
 
 ## Task 7: CLI and usable notification vertical slice
 
@@ -134,11 +134,11 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** `cli.Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error`. CLI invokes typed app services only through control client, except locked offline init.
 
-- [ ] Write TestSecretFileInput, TestPasswordNotAcceptedAsFlag, TestCLIStatusRedacted, TestAuthorizeSessionPolling, TestAccountRemoveConfirmation, TestNotifyTestPublishesWithoutMail, TestOutboxRetry, TestDaemonRequiredForMutation. Assert secrets never appear in stdout/status/errors; wrong usage returns nonzero; no concurrent direct DB writes; JSON status uses stable DTOs suitable for future Web UI.
-- [ ] Run `go test ./internal/transport/cli ./cmd/mailpulse`, confirming missing behavior.
-- [ ] Implement serve/init; account add/list/pause/resume/remove/authorize/resync; rule add/list/remove; notify test; outbox list/retry; status; version and healthcheck. Use standard flag parsing, terminal-hidden prompts or secret files, environment/JSON config only for runtime settings. Reject unknown fields and invalid URLs early.
-- [ ] Verify fake-provider end-to-end flow: baseline, arrival, filter, ntfy failure, restart, recovery, explicit reset. Document TLS endpoints, Outlook app registration, encrypted backups, device authorization, initialization boundary, moved-in mail semantics and at-least-once behavior. Examples contain only fictitious addresses and fake tokens.
-- [ ] Commit `feat: provide MailPulse management CLI and setup guides`.
+- [x] Write TestSecretFileInput, TestPasswordNotAcceptedAsFlag, TestCLIStatusRedacted, TestAuthorizeSessionPolling, TestAccountRemoveConfirmation, TestNotifyTestPublishesWithoutMail, TestOutboxRetry, TestDaemonRequiredForMutation. Assert secrets never appear in stdout/status/errors; wrong usage returns nonzero; no concurrent direct DB writes; JSON status uses stable DTOs suitable for future Web UI.
+- [x] Run `go test ./internal/transport/cli ./cmd/mailpulse`, confirming missing behavior.
+- [x] Implement serve/init; account add/list/pause/resume/remove/authorize/resync; rule add/list/remove; notify test; outbox list/retry; status; version and healthcheck. Use standard flag parsing, terminal-hidden prompts or secret files, environment/JSON config only for runtime settings. Reject unknown fields and invalid URLs early.
+- [x] Verify fake-provider end-to-end flow: baseline, arrival, filter, ntfy failure, restart, recovery, explicit reset. Document TLS endpoints, Outlook app registration, encrypted backups, device authorization, initialization boundary, moved-in mail semantics and at-least-once behavior. Examples contain only fictitious addresses and fake tokens.
+- [x] Commit `feat: provide MailPulse management CLI and setup guides`.
 
 ## Task 8: Container deployment and GitHub delivery
 
@@ -146,11 +146,11 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Interfaces:** Single binary `mailpulse`; container data /data, secret /run/secrets/mailpulse_key; image ghcr.io/syt100/mailpulse.
 
-- [ ] Add integration checks for TestContainerHealthAsNonRoot and TestCustomUIDCanWriteMountedData; assert UID 10001 default, custom UID works with correctly owned mount, read-only root works, secrets are absent from image and graceful stop preserves pending jobs.
-- [ ] Implement multi-stage CGO_ENABLED=0 build with CA certificates, OCI labels, binary healthcheck and pinned build/runtime image digests. Compose uses init, restart policy, no published management ports and writable data mount; include explicit directory ownership/key setup.
-- [ ] CI checks gofmt, go vet, go test, go test -race, builds and govulncheck. Pin action revisions. Build PR images without pushing; default-branch and version-tag workflows can publish amd64/arm64 to GHCR using GITHUB_TOKEN with packages:write. Scan before publication, scope token permissions, and use repository build contexts without secrets.
-- [ ] Run `go vet ./...`, `go test ./...`, `go test -race ./...`, `go build ./cmd/mailpulse`, `govulncheck ./...` and container smoke tests. Record actual image size and memory observations with workload; do not invent figures if Docker is unavailable.
-- [ ] Commit `build: add non-root containers and GitHub checks`.
+- [x] Add integration checks for TestContainerHealthAsNonRoot and TestCustomUIDCanWriteMountedData; assert UID 10001 default, custom UID works with correctly owned mount, read-only root works, secrets are absent from image and graceful stop preserves pending jobs.
+- [x] Implement multi-stage CGO_ENABLED=0 build with CA certificates, OCI labels, binary healthcheck and pinned build/runtime image digests. Compose uses init, restart policy, no published management ports and writable data mount; include explicit directory ownership/key setup.
+- [x] CI checks gofmt, go vet, go test, go test -race, builds and govulncheck. Pin action revisions. Build PR images without pushing; default-branch and version-tag workflows can publish amd64/arm64 to GHCR using GITHUB_TOKEN with packages:write. Scan before publication, scope token permissions, and use repository build contexts without secrets.
+- [x] Run `go vet ./...`, `go test ./...`, `go test -race ./...`, `go build ./cmd/mailpulse`, `govulncheck ./...` and container smoke tests. Record actual image size and memory observations with workload; do not invent figures if Docker is unavailable.
+- [x] Commit `build: add non-root containers and GitHub checks`.
 
 ## Task 9: Whole-branch review and deployment validation
 

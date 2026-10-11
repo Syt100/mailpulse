@@ -22,6 +22,8 @@ notify test 直接测试 ntfy 发布。它不创建邮箱事件；测试成功�
 
 /healthz 检查主进程和数据库可访问性，/readyz 检查调度器和发送器。个别账户失败不导致容器反复重启。
 
+默认向 stderr 写 JSON 诊断日志，仅包含账户 ID、状态、错误类别、耗时和事件数。不会记录账户地址、别名、邮件主题/发件人、Token、密码或上游原始错误。运行配置 `log_level` 或环境变量 `MAILPULSE_LOG_LEVEL` 可设为 debug/info/warn/error，默认 info。存储提交失败标记 degraded，不推进游标；若数据库无法保存状态，日志仍报告 storage_unavailable。
+
 守护进程和 CLI 必须使用同一数据目录/Unix socket。只允许一个守护进程持有数据库锁。用指定 user 启动容器时，数据目录和秘密文件必须属于该 UID 或对其可读写。Unix socket 和文件锁依赖 Linux；不支持原生 Windows 守护进程。
 
 ## 备份

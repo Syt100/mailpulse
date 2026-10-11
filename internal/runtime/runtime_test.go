@@ -1,14 +1,196 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"github.com/Syt100/mailpulse/internal/app"
 	"github.com/Syt100/mailpulse/internal/domain"
 	"github.com/Syt100/mailpulse/internal/store/sqlite"
+	"log/slog"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type failedCommit struct{}
+
+type pausedAccountSnapshot struct {
+	*sqlite.Store
+	started, release chan struct{}
+}
+
+func (s *pausedAccountSnapshot) ListAccounts(ctx context.Context) ([]domain.Account, error) {
+	accounts, e := s.Store.ListAccounts(ctx)
+	close(s.started)
+	select {
+	case <-s.release:
+		return accounts, e
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+func TestAccountMutationCannotRaceReconciliationSnapshot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, e := sqlite.Open(ctx, filepath.Join(t.TempDir(), "db"), 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	if e = s.CreateAccount(ctx, domain.Account{ID: "a", Provider: "fake", Enabled: true}, nil); e != nil {
+		t.Fatal(e)
+	}
+	repo := &pausedAccountSnapshot{Store: s, started: make(chan struct{}), release: make(chan struct{})}
+	super := NewSupervisor(repo, map[string]domain.Provider{"fake": provider{true}}, app.NewProcessor(s), app.NewDeliveryService(s, sink{}))
+	reconciled := make(chan error, 1)
+	go func() { reconciled <- super.reconcile(ctx) }()
+	<-repo.started
+	mutated := make(chan error, 1)
+	go func() {
+		mutated <- super.WithAccountStopped(ctx, "a", func() error { return s.RemoveAccount(ctx, "a") })
+	}()
+	premature := false
+	select {
+	case e = <-mutated:
+		premature = true
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(repo.release)
+	if err := <-reconciled; err != nil {
+		t.Fatal(err)
+	}
+	if !premature {
+		e = <-mutated
+	}
+	if e != nil {
+		t.Fatal(e)
+	}
+	cancel()
+	super.mu.Lock()
+	workers := super.workers
+	super.mu.Unlock()
+	for _, w := range workers {
+		w.cancel()
+		<-w.done
+	}
+	if premature {
+		t.Fatal("mutation crossed an unguarded account snapshot")
+	}
+	if len(workers) != 0 {
+		t.Fatal("reconciliation resurrected removed worker")
+	}
+}
+
+func (failedCommit) CommitBatch(context.Context, domain.Batch, []domain.Decision) error {
+	return errors.New("sensitive storage failure detail")
+}
+func TestStorageFailureReportsDegradedWithoutPrivateLogs(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, e := sqlite.Open(ctx, filepath.Join(t.TempDir(), "db"), 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	a := domain.Account{ID: "a", Alias: "private-alias", Address: "private@example.test", Provider: "fake", Enabled: true}
+	if e = s.CreateAccount(ctx, a, nil); e != nil {
+		t.Fatal(e)
+	}
+	var logs bytes.Buffer
+	super := NewSupervisor(s, map[string]domain.Provider{"fake": provider{}}, app.NewProcessor(failedCommit{}), app.NewDeliveryService(s, sink{}))
+	super.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	done := make(chan struct{})
+	go func() { defer close(done); super.runAccount(ctx, a) }()
+	state := ""
+	code := ""
+	for range 100 {
+		statuses, _ := s.Statuses(ctx)
+		for _, x := range statuses {
+			if x.ErrorCode != "" {
+				state, code = x.State, x.ErrorCode
+			}
+		}
+		if code != "" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	if state != "degraded" || code != "storage_unavailable" {
+		t.Fatalf("state=%s code=%s", state, code)
+	}
+	c, e := s.Cursor(context.Background(), "a", "INBOX")
+	if e != nil || c.Initialized {
+		t.Fatal("failed write advanced cursor")
+	}
+	output := logs.String()
+	for _, sensitive := range []string{"private-alias", "private@example.test", "sensitive storage", "\"subject\"", "\"sender\""} {
+		if strings.Contains(output, sensitive) {
+			t.Fatal("private data in logs")
+		}
+	}
+	if !strings.Contains(output, `"account_id":"a"`) || !strings.Contains(output, "storage_unavailable") || !strings.Contains(output, "elapsed_ms") {
+		t.Fatalf("missing diagnostic fields: %s", output)
+	}
+}
+
+type transientOnce struct{ calls atomic.Int32 }
+
+func (p *transientOnce) Scan(ctx context.Context, a domain.Account, c domain.Cursor) (domain.Batch, error) {
+	if p.calls.Add(1) == 1 {
+		return domain.Batch{}, &domain.ProviderError{Code: "transient"}
+	}
+	return provider{}.Scan(ctx, a, c)
+}
+func (p *transientOnce) Wait(ctx context.Context, a domain.Account, d time.Duration) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func TestTransientFailureRecoversWithoutWake(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	s, e := sqlite.Open(ctx, filepath.Join(t.TempDir(), "db"), 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	if e = s.CreateAccount(ctx, domain.Account{ID: "a", Provider: "fake", Enabled: true}, nil); e != nil {
+		t.Fatal(e)
+	}
+	p := &transientOnce{}
+	super := NewSupervisor(s, map[string]domain.Provider{"fake": p}, app.NewProcessor(s), app.NewDeliveryService(s, sink{}))
+	done := make(chan error, 1)
+	go func() { done <- super.Run(ctx) }()
+	backoff := false
+	recovered := false
+	for ctx.Err() == nil {
+		states, e := s.Statuses(ctx)
+		if e != nil {
+			break
+		}
+		for _, state := range states {
+			if state.State == "backoff" {
+				backoff = true
+			}
+			if state.State == "running" {
+				recovered = true
+			}
+		}
+		if recovered {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if !backoff || !recovered || p.calls.Load() != 2 {
+		t.Fatalf("backoff=%v recovered=%v calls=%d", backoff, recovered, p.calls.Load())
+	}
+}
 
 func TestAccountMutationWaitsForScanAndPreventsRestart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

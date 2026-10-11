@@ -17,6 +17,7 @@ import (
 	"github.com/Syt100/mailpulse/internal/transport/control"
 	health "github.com/Syt100/mailpulse/internal/transport/http"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -99,6 +100,9 @@ func serve(ctx context.Context, cfg config.Config) error {
 	oauth := &graph.OAuth{Secrets: s, Accounts: s}
 	providers := map[string]domain.Provider{"gmail": imap.NewProvider(s, nil), "qq": imap.NewProvider(s, nil), "outlook": graph.NewProvider(oauth, nil)}
 	super := runner.NewSupervisor(s, providers, app.NewProcessor(s), deliveries)
+	var level slog.Level
+	level.UnmarshalText([]byte(cfg.LogLevel))
+	super.Logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 	super.Interval = time.Duration(cfg.PollSeconds) * time.Second
 	auth := app.NewAuthorizationService(oauth, s.GetAccount)
 	auth.OnComplete = super.Wake

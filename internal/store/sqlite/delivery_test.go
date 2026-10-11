@@ -2,9 +2,38 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestLeaseMigrationPreservesExistingQueue(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, e := sql.Open("sqlite", path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	_, e = db.Exec(`CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);INSERT INTO schema_migrations VALUES(1);
+CREATE TABLE outbox(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,event_key TEXT NOT NULL,payload BLOB NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempt INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL DEFAULT 0,lease_until INTEGER NOT NULL DEFAULT 0,sent_at INTEGER NOT NULL DEFAULT 0,error_code TEXT NOT NULL DEFAULT '',UNIQUE(account_id,event_key));
+INSERT INTO outbox(id,account_id,event_key,payload) VALUES('legacy','a','k','{"title":"fake","message":"fake","priority":3}');`)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = db.Close(); e != nil {
+		t.Fatal(e)
+	}
+	s, e := Open(ctx, path, 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	jobs, e := s.ClaimDeliveries(ctx, time.Now(), 1, time.Minute)
+	if e != nil || len(jobs) != 1 || jobs[0].ID != "legacy" || jobs[0].ClaimToken == "" {
+		t.Fatalf("migration lost queue: %+v %v", jobs, e)
+	}
+}
 
 func TestRestartRecoversLease(t *testing.T) {
 	s := openTest(t, 100)

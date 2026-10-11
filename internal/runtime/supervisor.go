@@ -7,6 +7,7 @@ import (
 	"github.com/Syt100/mailpulse/internal/app"
 	"github.com/Syt100/mailpulse/internal/domain"
 	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,7 @@ type worker struct {
 	signature string
 }
 type Supervisor struct {
+	Logger     *slog.Logger
 	store      AccountRepository
 	providers  map[string]domain.Provider
 	processor  *app.Processor
@@ -38,7 +40,7 @@ type Supervisor struct {
 }
 
 func NewSupervisor(store AccountRepository, providers map[string]domain.Provider, p *app.Processor, d *app.DeliveryService) *Supervisor {
-	return &Supervisor{store: store, providers: providers, processor: p, deliveries: d, workers: map[string]*worker{}, wake: make(chan string, 64), Interval: 60 * time.Second}
+	return &Supervisor{Logger: slog.Default(), store: store, providers: providers, processor: p, deliveries: d, workers: map[string]*worker{}, wake: make(chan string, 64), Interval: 60 * time.Second}
 }
 func (s *Supervisor) Ping(ctx context.Context) error { return s.store.Ping(ctx) }
 func (s *Supervisor) Ready() bool                    { return s.running.Load() && s.deliveries.Running() }
@@ -121,12 +123,12 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 }
 func (s *Supervisor) reconcile(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	accounts, e := s.store.ListAccounts(ctx)
 	if e != nil {
 		return e
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	present := map[string]bool{}
 	for _, a := range accounts {
 		present[a.ID] = a.Enabled
@@ -187,11 +189,15 @@ func (s *Supervisor) runAccount(ctx context.Context, a domain.Account) {
 		if ctx.Err() != nil {
 			return
 		}
+		started := time.Now()
+		storageFailure := true
 		cursor, e := s.store.Cursor(ctx, a.ID, "INBOX")
 		if e == nil {
 			var b domain.Batch
+			storageFailure = false
 			b, e = p.Scan(ctx, a, cursor)
 			if e == nil {
+				storageFailure = true
 				rules, err := s.store.ListRules(ctx)
 				e = err
 				if e == nil {
@@ -207,11 +213,15 @@ func (s *Supervisor) runAccount(ctx context.Context, a domain.Account) {
 					}
 					status.LastSuccessAt = time.Now().UTC()
 					if s.store.PutStatus(ctx, status) != nil {
+						s.Logger.Warn("account status unavailable", "account_id", a.ID, "error_code", "storage_unavailable")
 						return
 					}
+					s.Logger.Info("mail scan completed", "account_id", a.ID, "elapsed_ms", time.Since(started).Milliseconds(), "events", len(b.Events), "baseline", b.Baseline, "more", b.More)
 					if b.More {
 						continue
 					}
+					storageFailure = false
+					started = time.Now()
 					e = p.Wait(ctx, a, s.Interval)
 					if e == nil {
 						continue
@@ -224,6 +234,10 @@ func (s *Supervisor) runAccount(ctx context.Context, a domain.Account) {
 		}
 		status.State = "backoff"
 		status.ErrorCode = "provider_transient"
+		if storageFailure {
+			status.State = "degraded"
+			status.ErrorCode = "storage_unavailable"
+		}
 		delay := app.RetryDelay(attempt)
 		attempt++
 		var pe *domain.ProviderError
@@ -243,7 +257,9 @@ func (s *Supervisor) runAccount(ctx context.Context, a domain.Account) {
 			status.State = "degraded"
 			status.ErrorCode = "outbox_capacity"
 		}
+		s.Logger.Warn("account scan interrupted", "account_id", a.ID, "state", status.State, "error_code", status.ErrorCode, "elapsed_ms", time.Since(started).Milliseconds())
 		if s.store.PutStatus(ctx, status) != nil {
+			s.Logger.Warn("account status unavailable", "account_id", a.ID, "error_code", "storage_unavailable")
 			return
 		}
 		if status.State == "auth_required" || status.State == "needs_resync" {

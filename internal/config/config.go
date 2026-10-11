@@ -14,6 +14,7 @@ type Config struct {
 	KeyFile     string `json:"key_file"`
 	Socket      string `json:"socket"`
 	Listen      string `json:"listen"`
+	LogLevel    string `json:"log_level"`
 	Capacity    int    `json:"capacity"`
 	PollSeconds int    `json:"poll_seconds"`
 }
@@ -25,6 +26,10 @@ func Default() Config {
 	}
 	if c.Listen == "" {
 		c.Listen = ":8080"
+	}
+	c.LogLevel = os.Getenv("MAILPULSE_LOG_LEVEL")
+	if c.LogLevel == "" {
+		c.LogLevel = "info"
 	}
 	return c
 }
@@ -47,6 +52,11 @@ func Load(path string) (Config, error) {
 	return c, nil
 }
 func (c *Config) Finalize() error {
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("invalid log level")
+	}
 	if c.DataDir == "" || c.Capacity < 1 || c.PollSeconds < 1 {
 		return fmt.Errorf("invalid runtime settings")
 	}
