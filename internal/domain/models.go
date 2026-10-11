@@ -24,6 +24,9 @@ type Cursor struct {
 	Initialized                             bool
 }
 type Batch struct {
+	More  bool
+	Alias string
+
 	Events   []MailEvent
 	Next     Cursor
 	Baseline bool
