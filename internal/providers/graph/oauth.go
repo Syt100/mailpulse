@@ -3,11 +3,15 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	msalerrors "github.com/AzureAD/microsoft-authentication-library-for-go/apps/errors"
 	"github.com/AzureAD/microsoft-authentication-library-for-go/apps/public"
 	"github.com/Syt100/mailpulse/internal/app"
 	"github.com/Syt100/mailpulse/internal/domain"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,8 +22,12 @@ var scopes = []string{"https://graph.microsoft.com/Mail.ReadBasic", "offline_acc
 type AccountGetter interface {
 	GetAccount(context.Context, string) (domain.Account, error)
 }
+type OAuthSecrets interface {
+	domain.SecretStore
+	SaveAuthorization(context.Context, string, string, []byte) error
+}
 type OAuth struct {
-	Secrets  domain.SecretStore
+	Secrets  OAuthSecrets
 	Accounts AccountGetter
 	mu       sync.Mutex
 	locks    map[string]*sync.Mutex
@@ -49,11 +57,15 @@ func (o *OAuth) client(a domain.Account, cacheOpt public.Option) (public.Client,
 	if cfg.Authority != "" && cfg.Authority != "consumers" {
 		return public.Client{}, fmt.Errorf("organization accounts are outside v0.1 scope")
 	}
-	h := o.HTTP
-	if h == nil {
-		h = &http.Client{Timeout: 30 * time.Second}
+	var h http.Client
+	if o.HTTP != nil {
+		h = *o.HTTP
 	}
-	return public.New(cfg.ClientID, public.WithAuthority(authority), cacheOpt, public.WithHTTPClient(h))
+	if h.Timeout == 0 {
+		h.Timeout = 30 * time.Second
+	}
+	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return public.New(cfg.ClientID, public.WithAuthority(authority), cacheOpt, public.WithHTTPClient(&h))
 }
 func (o *OAuth) AccessToken(ctx context.Context, id string) (string, error) {
 	l := o.lock(id)
@@ -61,10 +73,13 @@ func (o *OAuth) AccessToken(ctx context.Context, id string) (string, error) {
 	defer l.Unlock()
 	a, e := o.Accounts.GetAccount(ctx, id)
 	if e != nil {
-		return "", &domain.ProviderError{Code: "authentication_required"}
+		return "", oauthFailure(e)
 	}
 	identity, e := o.Secrets.Load(ctx, "identity:"+id)
-	if e != nil || len(identity) == 0 {
+	if e != nil {
+		return "", oauthFailure(e)
+	}
+	if len(identity) == 0 {
 		return "", &domain.ProviderError{Code: "authentication_required"}
 	}
 	client, e := o.client(a, public.WithCache(&CacheAdapter{Secrets: o.Secrets, AccountID: id}))
@@ -73,7 +88,7 @@ func (o *OAuth) AccessToken(ctx context.Context, id string) (string, error) {
 	}
 	accounts, e := client.Accounts(ctx)
 	if e != nil {
-		return "", &domain.ProviderError{Code: "transient"}
+		return "", oauthFailure(e)
 	}
 	for _, account := range accounts {
 		if account.HomeAccountID != string(identity) {
@@ -81,11 +96,53 @@ func (o *OAuth) AccessToken(ctx context.Context, id string) (string, error) {
 		}
 		result, e := client.AcquireTokenSilent(ctx, scopes, public.WithSilentAccount(account))
 		if e != nil {
-			return "", &domain.ProviderError{Code: "authentication_required"}
+			return "", oauthFailure(e)
 		}
 		return result.AccessToken, nil
 	}
 	return "", &domain.ProviderError{Code: "authentication_required"}
+}
+
+// Only permanent authentication rejection parks an account. Network and cache
+// failures remain retryable, without copying SDK errors containing credentials.
+func oauthFailure(err error) error {
+	p := &domain.ProviderError{Code: "transient"}
+	if errors.Is(err, domain.ErrNotFound) || err.Error() == "no token found" {
+		p.Code = "authentication_required"
+		return p
+	}
+	var call msalerrors.CallErr
+	if !errors.As(err, &call) || call.Resp == nil {
+		return p
+	}
+	r := call.Resp
+	if r.StatusCode == 429 {
+		p.Code = "throttled"
+		if n, e := strconv.ParseInt(r.Header.Get("Retry-After"), 10, 32); e == nil && n > 0 {
+			p.RetryAfter = time.Duration(n) * time.Second
+		} else if until, e := http.ParseTime(r.Header.Get("Retry-After")); e == nil {
+			p.RetryAfter = max(0, time.Until(until))
+		}
+		return p
+	}
+	if r.StatusCode == 401 || r.StatusCode == 403 {
+		p.Code = "authentication_required"
+		return p
+	}
+	if r.StatusCode != 400 || r.Body == nil {
+		return p
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body) != nil {
+		return p
+	}
+	switch body.Error {
+	case "invalid_grant", "interaction_required", "consent_required", "login_required", "invalid_client", "unauthorized_client":
+		p.Code = "authentication_required"
+	}
+	return p
 }
 func (o *OAuth) Begin(ctx context.Context, a domain.Account) (app.DeviceGrant, error) {
 	if a.Provider != "outlook" {
@@ -127,10 +184,7 @@ func (o *OAuth) Begin(ctx context.Context, a domain.Account) (app.DeviceGrant, e
 		if result.Account.HomeAccountID == "" || len(staging.raw) == 0 {
 			return fmt.Errorf("incomplete authorization result")
 		}
-		if e = o.Secrets.Save(ctx, "identity:"+a.ID, []byte(result.Account.HomeAccountID)); e != nil {
-			return e
-		}
-		return o.Secrets.Save(ctx, "cache:"+a.ID, staging.raw)
+		return o.Secrets.SaveAuthorization(ctx, a.ID, result.Account.HomeAccountID, staging.raw)
 	}
 	return grant, nil
 }

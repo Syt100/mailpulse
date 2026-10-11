@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/Syt100/mailpulse/internal/domain"
 	"time"
 )
@@ -36,17 +37,27 @@ func (s *Store) CountPending(ctx context.Context) (int, error) {
 	e := s.db.QueryRowContext(ctx, `SELECT count(*) FROM outbox WHERE status!='sent'`).Scan(&n)
 	return n, e
 }
-func (s *Store) MarkSent(ctx context.Context, id string, now time.Time) error {
-	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status='sent',lease_until=0,sent_at=?,error_code='' WHERE id=?`, now.Unix(), id)
+func (s *Store) MarkSent(ctx context.Context, id, token string, now time.Time) error {
+	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status='sent',lease_until=0,lease_token='',sent_at=?,error_code='' WHERE id=? AND lease_token=? AND status='pending'`, now.Unix(), id, token)
 	return e
 }
-func (s *Store) MarkFailure(ctx context.Context, id, status, code string, next time.Time) error {
-	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status=?,attempt=attempt+1,lease_until=0,next_at=?,error_code=? WHERE id=?`, status, next.Unix(), code, id)
+func (s *Store) MarkFailure(ctx context.Context, id, token, status, code string, next time.Time) error {
+	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status=?,attempt=attempt+1,lease_until=0,lease_token='',next_at=?,error_code=? WHERE id=? AND lease_token=? AND status='pending'`, status, next.Unix(), code, id, token)
 	return e
 }
 func (s *Store) Retry(ctx context.Context, id string) error {
-	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status='pending',next_at=0,lease_until=0,error_code='' WHERE id=? AND status!='sent'`, id)
-	return e
+	res, e := s.db.ExecContext(ctx, `UPDATE outbox SET status='pending',next_at=0,lease_until=0,lease_token='',error_code='' WHERE id=? AND status!='sent' AND lease_until<=?`, id, time.Now().Unix())
+	if e != nil {
+		return e
+	}
+	n, e := res.RowsAffected()
+	if e != nil {
+		return e
+	}
+	if n == 0 {
+		return fmt.Errorf("job absent, sent or currently leased")
+	}
+	return nil
 }
 func (s *Store) Unblock(ctx context.Context) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status='pending',next_at=0,error_code='' WHERE status='blocked'`)

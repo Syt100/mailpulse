@@ -12,8 +12,8 @@ import (
 
 type DeliveryRepository interface {
 	ClaimDeliveries(context.Context, time.Time, int, time.Duration) ([]domain.Delivery, error)
-	MarkSent(context.Context, string, time.Time) error
-	MarkFailure(context.Context, string, string, string, time.Time) error
+	MarkSent(context.Context, string, string, time.Time) error
+	MarkFailure(context.Context, string, string, string, string, time.Time) error
 	Prune(context.Context, time.Time) error
 }
 type DeliveryService struct {
@@ -97,7 +97,7 @@ func (s *DeliveryService) worker(ctx context.Context) error {
 				return nil
 			}
 			if e == nil {
-				if e = s.store.MarkSent(ctx, j.ID, time.Now()); e != nil {
+				if e = s.store.MarkSent(ctx, j.ID, j.ClaimToken, time.Now()); e != nil {
 					return e
 				}
 				continue
@@ -110,7 +110,7 @@ func (s *DeliveryService) worker(ctx context.Context) error {
 					after = p.RetryAfter
 				}
 			}
-			if e = s.store.MarkFailure(ctx, j.ID, status, code, time.Now().Add(after)); e != nil {
+			if e = s.store.MarkFailure(ctx, j.ID, j.ClaimToken, status, code, time.Now().Add(after)); e != nil {
 				return e
 			}
 		}

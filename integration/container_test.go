@@ -93,6 +93,7 @@ func containerCheck(t *testing.T, uid int) {
 	if !ready {
 		t.Fatalf("container unhealthy: %s", docker("logs", name))
 	}
+	t.Logf("image bytes=%s; memory with 0 active mailboxes and 1 queued fake job=%s", docker("image", "inspect", "--format", "{{.Size}}", image), docker("stats", "--no-stream", "--format", "{{.MemUsage}}", name))
 	if got := docker("exec", name, "id", "-u"); got != fmt.Sprint(uid) {
 		t.Fatalf("uid=%s", got)
 	}

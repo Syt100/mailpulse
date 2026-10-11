@@ -28,6 +28,7 @@ type Store interface {
 type Supervisor interface {
 	Wake(string)
 	Ready() bool
+	WithAccountStopped(context.Context, string, func() error) error
 }
 type Services struct {
 	Accounts      *app.AccountService
@@ -155,16 +156,24 @@ func (s *Server) dispatch(ctx context.Context, q Request) (any, error) {
 		if e := decode(q.Params, &id); e != nil {
 			return nil, e
 		}
+		mutate := func() error {
+			switch q.Method {
+			case "account.pause":
+				return sv.Accounts.Pause(ctx, id.ID)
+			case "account.resume":
+				return sv.Accounts.Resume(ctx, id.ID)
+			case "account.remove":
+				return sv.Accounts.Remove(ctx, id.ID, id.Confirmed)
+			case "account.resync":
+				return sv.Accounts.Resync(ctx, id.ID, id.IgnoreHistory)
+			}
+			return fmt.Errorf("unknown mutation")
+		}
 		var e error
-		switch q.Method {
-		case "account.pause":
-			e = sv.Accounts.Pause(ctx, id.ID)
-		case "account.resume":
-			e = sv.Accounts.Resume(ctx, id.ID)
-		case "account.remove":
-			e = sv.Accounts.Remove(ctx, id.ID, id.Confirmed)
-		case "account.resync":
-			e = sv.Accounts.Resync(ctx, id.ID, id.IgnoreHistory)
+		if sv.Supervisor != nil {
+			e = sv.Supervisor.WithAccountStopped(ctx, id.ID, mutate)
+		} else {
+			e = mutate()
 		}
 		if e == nil && sv.Supervisor != nil {
 			sv.Supervisor.Wake(id.ID)

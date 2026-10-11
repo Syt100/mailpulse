@@ -44,6 +44,7 @@ type Notification struct {
 }
 type Delivery struct {
 	ID, AccountID, EventKey   string
+	ClaimToken                string
 	Payload                   Notification
 	Attempt                   int
 	NextAttemptAt, LeaseUntil time.Time

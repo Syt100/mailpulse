@@ -12,7 +12,7 @@
 
 ## 本地运行
 
-需要 Linux 和 Go 1.27 或更新版本。Docker/Portainer 部署见 [部署说明](docs/deployment.md)。
+需要 Linux 和 Go 1.27.2 或更新版本。Docker/Portainer 部署见 [部署说明](docs/deployment.md)。
 
 ```sh
 go build -o dist/mailpulse ./cmd/mailpulse

@@ -65,7 +65,24 @@ CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,e
 CREATE INDEX IF NOT EXISTS outbox_due ON outbox(status,next_at,lease_until);
 CREATE TABLE IF NOT EXISTS account_status(account_id TEXT PRIMARY KEY,data BLOB NOT NULL);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations WHERE version=2`).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		if _, err = tx.ExecContext(ctx, `ALTER TABLE outbox ADD COLUMN lease_token TEXT NOT NULL DEFAULT ''; INSERT INTO schema_migrations VALUES(2);`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) Cursor(ctx context.Context, account, folder string) (domain.Cursor, error) {
 	var b []byte
@@ -156,8 +173,10 @@ func (s *Store) ClaimDeliveries(ctx context.Context, now time.Time, limit int, l
 	if e != nil {
 		return nil, e
 	}
-	for _, d := range jobs {
-		if _, e = tx.ExecContext(ctx, `UPDATE outbox SET lease_until=? WHERE id=?`, d.LeaseUntil.Unix(), d.ID); e != nil {
+	for i := range jobs {
+		jobs[i].ClaimToken = NewID()
+		d := jobs[i]
+		if _, e = tx.ExecContext(ctx, `UPDATE outbox SET lease_until=?,lease_token=? WHERE id=?`, d.LeaseUntil.Unix(), d.ClaimToken, d.ID); e != nil {
 			return nil, e
 		}
 	}

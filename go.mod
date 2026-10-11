@@ -1,6 +1,6 @@
 module github.com/Syt100/mailpulse
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1

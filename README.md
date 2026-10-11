@@ -8,7 +8,7 @@ MailPulse is a notification service. It reads metadata, keeps mail at the origin
 
 ## Build and start
 
-Requires Linux and Go 1.27 or newer. Docker deployment is described in [deployment.md](docs/deployment.md).
+Requires Linux and Go 1.27.2 or newer. Docker deployment is described in [deployment.md](docs/deployment.md).
 
 ```sh
 go build -o dist/mailpulse ./cmd/mailpulse
@@ -46,7 +46,7 @@ Examples use fictitious addresses, domains and IDs; replace them locally. Secret
 ./dist/mailpulse --data-dir ./data rule list
 ```
 
-Accounts and OAuth caches are encrypted at rest with a separate AES-GCM key. Losing the key loses access to saved credentials. Keep the key in a separate protected backup, and never commit either the key or the database. Subjects and senders exist in pending notification payloads; successfully sent payloads are removed after seven days. Do not treat a database backup as free of personal data.
+Credentials and OAuth caches are encrypted at rest with a separate AES-GCM key. Losing the key loses access to saved credentials. Keep the key in a separate protected backup, and never commit either the key or the database. Subjects and senders exist in pending notification payloads; successfully sent payloads are removed after seven days. Do not treat a database backup as free of personal data.
 
 `/healthz` checks the process/database; `/readyz` checks scheduler/sender readiness. An individual account's authentication failure does not fail the whole container. No public management API or Web UI is included; application services are reusable for that later work.
 

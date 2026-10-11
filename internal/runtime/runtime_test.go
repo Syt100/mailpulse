@@ -10,6 +10,71 @@ import (
 	"time"
 )
 
+func TestAccountMutationWaitsForScanAndPreventsRestart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, e := sqlite.Open(ctx, filepath.Join(t.TempDir(), "db"), 10)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	if e = s.CreateAccount(ctx, domain.Account{ID: "a", Provider: "fake", Enabled: true}, nil); e != nil {
+		t.Fatal(e)
+	}
+	p := &stalledScan{started: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	super := NewSupervisor(s, map[string]domain.Provider{"fake": p}, app.NewProcessor(s), app.NewDeliveryService(s, sink{}))
+	done := make(chan error, 1)
+	go func() { done <- super.Run(ctx) }()
+	select {
+	case <-p.started:
+	case <-time.After(time.Second):
+		t.Fatal("scan not started")
+	}
+	mutated := make(chan struct{})
+	mutationDone := make(chan error, 1)
+	go func() {
+		mutationDone <- super.WithAccountStopped(ctx, "a", func() error { close(mutated); return s.RemoveAccount(ctx, "a") })
+	}()
+	select {
+	case <-p.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("scan not cancelled")
+	}
+	select {
+	case <-mutated:
+		t.Fatal("mutation ran before scan joined")
+	default:
+	}
+	close(p.release)
+	if e = <-mutationDone; e != nil {
+		t.Fatal(e)
+	}
+	if _, e = s.GetAccount(ctx, "a"); e != domain.ErrNotFound {
+		t.Fatal("account survived")
+	}
+	c, e := s.Cursor(ctx, "a", "INBOX")
+	if e != nil || c.Initialized {
+		t.Fatal("old scan recreated state")
+	}
+	cancel()
+	if e = <-done; e != nil {
+		t.Fatal(e)
+	}
+}
+
+type stalledScan struct{ started, cancelled, release chan struct{} }
+
+func (p *stalledScan) Scan(ctx context.Context, a domain.Account, c domain.Cursor) (domain.Batch, error) {
+	close(p.started)
+	<-ctx.Done()
+	close(p.cancelled)
+	<-p.release
+	return domain.Batch{Next: domain.Cursor{AccountID: a.ID, Folder: "INBOX", Position: "old", Initialized: true}}, nil
+}
+func (p *stalledScan) Wait(ctx context.Context, a domain.Account, d time.Duration) error {
+	return ctx.Err()
+}
+
 func TestSecondDaemonRejected(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "lock")
 	l, e := AcquireLock(p)

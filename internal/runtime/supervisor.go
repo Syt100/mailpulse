@@ -43,10 +43,35 @@ func NewSupervisor(store AccountRepository, providers map[string]domain.Provider
 func (s *Supervisor) Ping(ctx context.Context) error { return s.store.Ping(ctx) }
 func (s *Supervisor) Ready() bool                    { return s.running.Load() && s.deliveries.Running() }
 func (s *Supervisor) Wake(id string) {
+	s.mu.Lock()
+	if w := s.workers[id]; w != nil {
+		w.cancel()
+	}
+	s.mu.Unlock()
 	select {
 	case s.wake <- id:
 	default:
 	}
+}
+
+// WithAccountStopped joins the old worker and excludes reconciliation until
+// the mutation finishes, so no old cursor or event can cross a reset/removal.
+func (s *Supervisor) WithAccountStopped(ctx context.Context, id string, mutate func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if w := s.workers[id]; w != nil {
+		w.cancel()
+		select {
+		case <-w.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		delete(s.workers, id)
+	}
+	if e := ctx.Err(); e != nil {
+		return e
+	}
+	return mutate()
 }
 func (s *Supervisor) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
