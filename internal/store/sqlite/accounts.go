@@ -85,6 +85,9 @@ func (s *Store) RemoveAccount(ctx context.Context, id string) error {
 			return e
 		}
 	}
+	if _, e = tx.ExecContext(ctx, `DELETE FROM secrets WHERE id IN (?,?)`, "cache:"+id, "identity:"+id); e != nil {
+		return e
+	}
 	return tx.Commit()
 }
 func (s *Store) ResetState(ctx context.Context, id string) error {
