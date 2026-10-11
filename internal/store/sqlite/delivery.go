@@ -8,29 +8,88 @@ import (
 	"time"
 )
 
-type OutboxItem struct {
-	ID        string `json:"id"`
-	AccountID string `json:"account_id"`
-	Status    string `json:"status"`
-	Attempt   int    `json:"attempt"`
-	ErrorCode string `json:"error_code,omitempty"`
-}
+type OutboxItem = domain.OutboxItem
 
 func (s *Store) ListOutbox(ctx context.Context) ([]OutboxItem, error) {
-	rows, e := s.db.QueryContext(ctx, `SELECT id,account_id,status,attempt,error_code FROM outbox ORDER BY id LIMIT 1000`)
+	page, err := s.ListOutboxPage(ctx, domain.OutboxQuery{Limit: 1000})
+	return page.Items, err
+}
+
+func (s *Store) ListOutboxPage(ctx context.Context, q domain.OutboxQuery) (domain.OutboxPage, error) {
+	page := domain.OutboxPage{Items: []domain.OutboxItem{}}
+	if q.Limit < 1 || q.Limit > 1000 {
+		return page, fmt.Errorf("invalid page size")
+	}
+	rows, e := s.db.QueryContext(ctx, `SELECT id,account_id,status,attempt,error_code FROM outbox WHERE id>? AND (?='' OR status=?) AND (?='' OR account_id=?) ORDER BY id LIMIT ?`, q.After, q.Status, q.Status, q.AccountID, q.AccountID, q.Limit+1)
 	if e != nil {
-		return nil, e
+		return page, e
 	}
 	defer rows.Close()
-	out := []OutboxItem{}
 	for rows.Next() {
 		var x OutboxItem
 		if e = rows.Scan(&x.ID, &x.AccountID, &x.Status, &x.Attempt, &x.ErrorCode); e != nil {
-			return nil, e
+			return page, e
 		}
-		out = append(out, x)
+		page.Items = append(page.Items, x)
 	}
-	return out, rows.Err()
+	if e = rows.Err(); e != nil {
+		return page, e
+	}
+	if len(page.Items) > q.Limit {
+		page.Items = page.Items[:q.Limit]
+		page.NextCursor = page.Items[len(page.Items)-1].ID
+	}
+	return page, nil
+}
+
+// One transaction keeps per-account and global queue counts in the same snapshot.
+func (s *Store) NotificationStatus(ctx context.Context) (domain.RuntimeStatus, error) {
+	status := domain.RuntimeStatus{Accounts: []domain.AccountStatus{}}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return status, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.data,st.data,COALESCE(q.n,0) FROM accounts a LEFT JOIN account_status st ON st.account_id=a.id LEFT JOIN (SELECT account_id,count(*) n FROM outbox WHERE status!='sent' GROUP BY account_id) q ON q.account_id=a.id ORDER BY a.id`)
+	if err != nil {
+		return status, err
+	}
+	for rows.Next() {
+		var id string
+		var rawAccount, rawStatus []byte
+		var count int
+		if err = rows.Scan(&id, &rawAccount, &rawStatus, &count); err != nil {
+			rows.Close()
+			return status, err
+		}
+		var a domain.Account
+		if err = json.Unmarshal(rawAccount, &a); err != nil {
+			rows.Close()
+			return status, err
+		}
+		item := domain.AccountStatus{AccountID: id, State: "initializing"}
+		if len(rawStatus) > 0 {
+			if err = json.Unmarshal(rawStatus, &item); err != nil {
+				rows.Close()
+				return status, err
+			}
+		}
+		item.AccountID = id
+		if !a.Enabled {
+			item.State = "paused"
+		}
+		item.PendingNotifications = count
+		status.Accounts = append(status.Accounts, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return status, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM outbox WHERE status!='sent'`).Scan(&status.PendingNotifications); err != nil {
+		return status, err
+	}
+	return status, tx.Commit()
 }
 func (s *Store) CountPending(ctx context.Context) (int, error) {
 	var n int
@@ -40,6 +99,12 @@ func (s *Store) CountPending(ctx context.Context) (int, error) {
 func (s *Store) MarkSent(ctx context.Context, id, token string, now time.Time) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status='sent',lease_until=0,lease_token='',sent_at=?,error_code='' WHERE id=? AND lease_token=? AND status='pending'`, now.Unix(), id, token)
 	return e
+}
+
+// Release only this claim; a cancelled or expired sender cannot release a newer one.
+func (s *Store) ReleaseDelivery(ctx context.Context, id, token string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET lease_until=0,lease_token='' WHERE id=? AND lease_token=? AND status='pending'`, id, token)
+	return err
 }
 func (s *Store) MarkFailure(ctx context.Context, id, token, status, code string, next time.Time) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE outbox SET status=?,attempt=attempt+1,lease_until=0,lease_token='',next_at=?,error_code=? WHERE id=? AND lease_token=? AND status='pending'`, status, next.Unix(), code, id, token)

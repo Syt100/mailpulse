@@ -8,18 +8,12 @@ import (
 	"github.com/Syt100/mailpulse/internal/domain"
 	"io"
 	"net/http"
-	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type Config struct {
-	URL   string `json:"url"`
-	Topic string `json:"topic"`
-	Token string `json:"token,omitempty"`
-}
+type Config = domain.NotificationConfig
 type Client struct {
 	baseURL, topic string
 	token          func(context.Context) (string, error)
@@ -27,12 +21,8 @@ type Client struct {
 }
 
 func NewClient(baseURL, topic string, token func(context.Context) (string, error), client *http.Client) (*Client, error) {
-	u, e := url.Parse(baseURL)
-	if e != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return nil, fmt.Errorf("invalid ntfy base URL")
-	}
-	if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(topic) {
-		return nil, fmt.Errorf("invalid ntfy topic")
+	if err := (domain.NotificationConfig{URL: baseURL, Topic: topic}).Validate(); err != nil {
+		return nil, err
 	}
 	var h http.Client
 	if client != nil {

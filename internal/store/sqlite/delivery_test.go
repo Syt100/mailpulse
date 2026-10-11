@@ -119,3 +119,33 @@ func TestStaleSenderCannotOverwriteNewClaim(t *testing.T) {
 		t.Fatalf("stale completion unsent job: %+v %v", items, e)
 	}
 }
+
+func TestReleaseDeliveryDoesNotBreakNewerLease(t *testing.T) {
+	s := openTest(t, 100)
+	ctx := context.Background()
+	if err := s.CommitBatch(ctx, batch("k"), decision("k")); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	old, err := s.ClaimDeliveries(ctx, now, 1, time.Minute)
+	if err != nil || len(old) != 1 {
+		t.Fatal(err)
+	}
+	current, err := s.ClaimDeliveries(ctx, now.Add(61*time.Second), 1, time.Minute)
+	if err != nil || len(current) != 1 {
+		t.Fatal(err)
+	}
+	if err = s.ReleaseDelivery(ctx, old[0].ID, old[0].ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, err := s.ClaimDeliveries(ctx, now.Add(61*time.Second), 1, time.Minute); err != nil || len(jobs) != 0 {
+		t.Fatal("stale release broke newer lease")
+	}
+	if err = s.ReleaseDelivery(ctx, current[0].ID, current[0].ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+	jobs, err := s.ClaimDeliveries(ctx, now.Add(61*time.Second), 1, time.Minute)
+	if err != nil || len(jobs) != 1 || jobs[0].ClaimToken == current[0].ClaimToken {
+		t.Fatal("current release not immediately reclaimable")
+	}
+}

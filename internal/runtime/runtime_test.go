@@ -360,9 +360,89 @@ func TestShutdownRecoversInFlightJob(t *testing.T) {
 	}
 	cancel()
 	<-done
-	jobs, _ := s.ClaimDeliveries(context.Background(), time.Now().Add(2*time.Minute), 1, time.Minute)
+	jobs, _ := s.ClaimDeliveries(context.Background(), time.Now(), 1, time.Minute)
 	if len(jobs) != 1 {
-		t.Fatal("in-flight job lost")
+		t.Fatal("shutdown did not immediately release the in-flight job")
+	}
+}
+
+type cancelledReconcile struct {
+	*sqlite.Store
+	started <-chan struct{}
+	cancel  context.CancelFunc
+}
+
+func (s cancelledReconcile) ListAccounts(ctx context.Context) ([]domain.Account, error) {
+	select {
+	case <-s.started:
+		s.cancel()
+		return nil, ctx.Err()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+type delayedRelease struct {
+	*sqlite.Store
+	started chan struct{}
+	resume  <-chan struct{}
+}
+
+func (s delayedRelease) ReleaseDelivery(ctx context.Context, id, token string) error {
+	close(s.started)
+	select {
+	case <-s.resume:
+		return s.Store.ReleaseDelivery(ctx, id, token)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func TestShutdownDuringReconcileJoinsDeliveryCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "db"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.CommitBatch(ctx, domain.Batch{Next: domain.Cursor{AccountID: "a"}, Events: []domain.MailEvent{{Key: "k"}}}, []domain.Decision{{EventKey: "k", Notify: true, Payload: domain.Notification{Priority: 3}}}); err != nil {
+		t.Fatal(err)
+	}
+	p := blockingSink{make(chan struct{}, 1)}
+	gate := make(chan struct{})
+	release := delayedRelease{s, make(chan struct{}), gate}
+	super := NewSupervisor(cancelledReconcile{s, p.started, cancel}, nil, app.NewProcessor(s), app.NewDeliveryService(release, p))
+	done := make(chan error, 1)
+	go func() { done <- super.Run(ctx) }()
+	select {
+	case <-release.started:
+	case <-time.After(time.Second):
+		close(gate)
+		t.Fatal("release not started")
+	}
+	premature := false
+	select {
+	case <-done:
+		premature = true
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(gate)
+	if !premature {
+		select {
+		case err = <-done:
+		case <-time.After(time.Second):
+			t.Fatal("supervisor did not finish")
+		}
+	}
+	if premature {
+		t.Fatal("supervisor returned before delivery cleanup")
+	}
+	if err != nil {
+		t.Fatalf("clean cancellation failed: %v", err)
+	}
+	jobs, err := s.ClaimDeliveries(context.Background(), time.Now(), 1, time.Minute)
+	if err != nil || len(jobs) != 1 {
+		t.Fatal("cleanup did not finish before supervisor returned")
 	}
 }
 

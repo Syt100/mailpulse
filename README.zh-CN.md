@@ -46,10 +46,14 @@ go build -o dist/mailpulse ./cmd/mailpulse
 ./dist/mailpulse --data-dir ./data account pause --id ACCOUNT_ID
 ./dist/mailpulse --data-dir ./data account resume --id ACCOUNT_ID
 ./dist/mailpulse --data-dir ./data outbox list
+./dist/mailpulse --data-dir ./data outbox list --limit 100 --status failed --account ACCOUNT_ID
+./dist/mailpulse --data-dir ./data outbox list --limit 100 --status failed --account ACCOUNT_ID --after NEXT_CURSOR
 ./dist/mailpulse --data-dir ./data outbox retry --id JOB_ID
 ```
 
 暂停账户只停止收信，已入队通知仍可发送。`account remove --id ACCOUNT_ID --yes` 会删除账户及其凭据、状态和待发通知。
+
+`status` 同时显示每个账户和全局的待发数量（含 pending、blocked、failed）。`outbox list` 返回 items 和可选 next_cursor，默认每页 100 条，支持 1–1000 条、账户及状态筛选。把 next_cursor 传给 --after 查看下一页，直到不再返回游标。优雅退出会释放当前发送租约，使重启能立即补发；硬终止仍等待最长一分钟租约过期。
 
 游标失效时状态为 `needs_resync`，服务不会静默跳过。使用 `account resync --id ACCOUNT_ID --ignore-history` 明确建立新基线；失效期间无法确认的增量将跳过，已有待发通知保留。
 

@@ -14,6 +14,7 @@ type DeliveryRepository interface {
 	ClaimDeliveries(context.Context, time.Time, int, time.Duration) ([]domain.Delivery, error)
 	MarkSent(context.Context, string, string, time.Time) error
 	MarkFailure(context.Context, string, string, string, string, time.Time) error
+	ReleaseDelivery(context.Context, string, string) error
 	Prune(context.Context, time.Time) error
 }
 type DeliveryService struct {
@@ -67,8 +68,18 @@ func (s *DeliveryService) Run(ctx context.Context, concurrency int) error {
 		return e
 	case <-ctx.Done():
 		<-done
+		select {
+		case e := <-errs:
+			return e
+		default:
+		}
 		return nil
 	case <-done:
+		select {
+		case e := <-errs:
+			return e
+		default:
+		}
 		return nil
 	}
 }
@@ -83,35 +94,23 @@ func (s *DeliveryService) worker(ctx context.Context) error {
 		now := time.Now()
 		if now.Sub(cleanup) > time.Hour {
 			if e := s.store.Prune(ctx, now); e != nil {
+				if ctx.Err() != nil && errors.Is(e, ctx.Err()) {
+					return nil
+				}
 				return e
 			}
 			cleanup = now
 		}
 		jobs, e := s.store.ClaimDeliveries(ctx, now, 1, time.Minute)
 		if e != nil {
+			if ctx.Err() != nil && errors.Is(e, ctx.Err()) {
+				return nil
+			}
 			return e
 		}
 		for _, j := range jobs {
-			e = s.publisher.Publish(ctx, j.Payload)
-			if ctx.Err() != nil {
-				return nil
-			}
-			if e == nil {
-				if e = s.store.MarkSent(ctx, j.ID, j.ClaimToken, time.Now()); e != nil {
-					return e
-				}
-				continue
-			}
-			status, code, after := "pending", "publish_error", RetryDelay(j.Attempt)
-			var p *domain.DeliveryError
-			if errors.As(e, &p) {
-				status, code = p.Status, p.Code
-				if p.RetryAfter > after {
-					after = p.RetryAfter
-				}
-			}
-			if e = s.store.MarkFailure(ctx, j.ID, j.ClaimToken, status, code, time.Now().Add(after)); e != nil {
-				return e
+			if err := s.deliver(ctx, j); err != nil {
+				return err
 			}
 		}
 		select {
@@ -120,4 +119,40 @@ func (s *DeliveryService) worker(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+// Every exit with an unfinished claim releases only that claim. In particular,
+// cancellation during a completion write must not bypass shutdown cleanup.
+func (s *DeliveryService) deliver(ctx context.Context, j domain.Delivery) (err error) {
+	defer func() {
+		if ctx.Err() == nil && err == nil {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		releaseErr := s.store.ReleaseDelivery(cleanup, j.ID, j.ClaimToken)
+		cancel()
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			err = nil
+		}
+		err = errors.Join(err, releaseErr)
+	}()
+	if ctx.Err() != nil {
+		return nil
+	}
+	publishErr := s.publisher.Publish(ctx, j.Payload)
+	if ctx.Err() != nil {
+		return nil
+	}
+	if publishErr == nil {
+		return s.store.MarkSent(ctx, j.ID, j.ClaimToken, time.Now())
+	}
+	status, code, after := "pending", "publish_error", RetryDelay(j.Attempt)
+	var p *domain.DeliveryError
+	if errors.As(publishErr, &p) {
+		status, code = p.Status, p.Code
+		if p.RetryAfter > after {
+			after = p.RetryAfter
+		}
+	}
+	return s.store.MarkFailure(ctx, j.ID, j.ClaimToken, status, code, time.Now().Add(after))
 }

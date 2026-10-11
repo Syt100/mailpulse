@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -73,10 +72,7 @@ func (p *Provider) Scan(ctx context.Context, a domain.Account, c domain.Cursor) 
 		case 429:
 			code = "throttled"
 		}
-		var after time.Duration
-		if n, e := strconv.Atoi(res.Header.Get("Retry-After")); e == nil && n > 0 {
-			after = time.Duration(n) * time.Second
-		}
+		after := retryAfter(res.Header.Get("Retry-After"), time.Now())
 		return domain.Batch{}, &domain.ProviderError{Code: code, RetryAfter: after}
 	}
 	var data struct {

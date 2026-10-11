@@ -17,11 +17,13 @@ type fakeRPC struct {
 	secret  string
 	poll    int
 	id      string
+	params  []byte
 }
 
 func (f *fakeRPC) Call(ctx context.Context, method string, params, result any) error {
 	f.methods = append(f.methods, method)
 	raw, _ := json.Marshal(params)
+	f.params = raw
 	var m map[string]json.RawMessage
 	json.Unmarshal(raw, &m)
 	json.Unmarshal(m["id"], &f.id)
@@ -47,6 +49,21 @@ func (f *fakeRPC) Call(ctx context.Context, method string, params, result any) e
 		json.Unmarshal(b, result)
 	}
 	return nil
+}
+
+func TestOutboxListPaginationFlags(t *testing.T) {
+	f := &fakeRPC{}
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"outbox", "list", "--limit", "20", "--after", "cursor", "--status", "failed", "--account", "a"}, strings.NewReader(""), &out, &out, f)
+	var q struct {
+		Limit     int    `json:"limit"`
+		After     string `json:"after"`
+		Status    string `json:"status"`
+		AccountID string `json:"account_id"`
+	}
+	if err != nil || json.Unmarshal(f.params, &q) != nil || q.Limit != 20 || q.After != "cursor" || q.Status != "failed" || q.AccountID != "a" {
+		t.Fatalf("paging options not forwarded: %s %v", f.params, err)
+	}
 }
 func TestSecretFileInput(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "secret")

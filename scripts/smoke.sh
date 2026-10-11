@@ -51,7 +51,12 @@ import json,pathlib,sys
 p=pathlib.Path(sys.argv[1]); rules=json.loads((p/'rules.json').read_text())
 assert len(rules)==1 and rules[0]['sender_domain']=='example.test'
 PY
-"$binary" outbox list
+"$binary" outbox list --limit 10 --status failed >"$smoke_dir/outbox.json"
+python3 - "$smoke_dir/outbox.json" <<'PY_CHECK'
+import json,sys
+page=json.load(open(sys.argv[1]))
+assert page['items']==[] and not page.get('next_cursor')
+PY_CHECK
 kill -TERM "$daemon_pid"
 wait "$daemon_pid"
 daemon_pid=''

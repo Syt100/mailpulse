@@ -11,7 +11,6 @@ import (
 	"github.com/Syt100/mailpulse/internal/domain"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -118,11 +117,7 @@ func oauthFailure(err error) error {
 	r := call.Resp
 	if r.StatusCode == 429 {
 		p.Code = "throttled"
-		if n, e := strconv.ParseInt(r.Header.Get("Retry-After"), 10, 32); e == nil && n > 0 {
-			p.RetryAfter = time.Duration(n) * time.Second
-		} else if until, e := http.ParseTime(r.Header.Get("Retry-After")); e == nil {
-			p.RetryAfter = max(0, time.Until(until))
-		}
+		p.RetryAfter = retryAfter(r.Header.Get("Retry-After"), time.Now())
 		return p
 	}
 	if r.StatusCode == 401 || r.StatusCode == 403 {

@@ -8,7 +8,6 @@ import (
 	"github.com/Syt100/mailpulse/internal/app"
 	"github.com/Syt100/mailpulse/internal/config"
 	"github.com/Syt100/mailpulse/internal/domain"
-	"github.com/Syt100/mailpulse/internal/notify/ntfy"
 	"github.com/Syt100/mailpulse/internal/transport/control"
 	"golang.org/x/term"
 	"io"
@@ -293,15 +292,21 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 					return e
 				}
 			}
-			return call("notify.configure", ntfy.Config{URL: *url, Topic: *topic, Token: string(b)})
+			return call("notify.configure", domain.NotificationConfig{URL: *url, Topic: *topic, Token: string(b)})
 		}
 	case "outbox":
 		switch command {
 		case "list":
-			if len(rest) != 0 {
-				return fmt.Errorf("list takes no options")
+			f := flags("outbox list")
+			q := domain.OutboxQuery{}
+			f.IntVar(&q.Limit, "limit", 100, "page size, 1 through 1000")
+			f.StringVar(&q.After, "after", "", "next_cursor from previous page")
+			f.StringVar(&q.Status, "status", "", "pending, blocked, failed or sent")
+			f.StringVar(&q.AccountID, "account", "", "account ID filter")
+			if e := parse(f, rest); e != nil {
+				return e
 			}
-			return call("outbox.list", struct{}{})
+			return call("outbox.list", q)
 		case "retry":
 			f := flags("outbox retry")
 			id := f.String("id", "", "job ID")

@@ -50,10 +50,43 @@ type Delivery struct {
 	NextAttemptAt, LeaseUntil time.Time
 }
 type AccountStatus struct {
-	AccountID     string    `json:"account_id"`
-	State         string    `json:"state"`
-	LastSuccessAt time.Time `json:"last_success_at"`
-	ErrorCode     string    `json:"error_code,omitempty"`
+	AccountID            string    `json:"account_id"`
+	State                string    `json:"state"`
+	LastSuccessAt        time.Time `json:"last_success_at"`
+	ErrorCode            string    `json:"error_code,omitempty"`
+	PendingNotifications int       `json:"pending_notifications"`
+}
+
+type RuntimeStatus struct {
+	Accounts             []AccountStatus `json:"accounts"`
+	PendingNotifications int             `json:"pending_notifications"`
+	Ready                bool            `json:"ready"`
+}
+
+type OutboxItem struct {
+	ID        string `json:"id"`
+	AccountID string `json:"account_id"`
+	Status    string `json:"status"`
+	Attempt   int    `json:"attempt"`
+	ErrorCode string `json:"error_code,omitempty"`
+}
+
+type OutboxQuery struct {
+	Limit     int    `json:"limit"`
+	After     string `json:"after,omitempty"`
+	Status    string `json:"status,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+type OutboxPage struct {
+	Items      []OutboxItem `json:"items"`
+	NextCursor string       `json:"next_cursor,omitempty"`
+}
+
+type NotificationConfig struct {
+	URL   string `json:"url"`
+	Topic string `json:"topic"`
+	Token string `json:"token,omitempty"`
 }
 type Rule struct {
 	ID              string `json:"id"`

@@ -156,10 +156,10 @@ Providers return typed errors: authentication_required, needs_resync, transient,
 
 **Files:** `docs/validation.md`; targeted code/test fixes if review reveals defects.
 
-- [ ] Review spec coverage, credential leakage, cursor atomicity, URL validation, queue ownership and shutdown; investigate any failures before changing code. Each defect receives a reproducing regression test.
-- [ ] Re-run only required affected checks, then complete full release checks once. Confirm GitHub CI on the actual latest commit and inspect logs when jobs fail.
-- [ ] Open a feature PR with implemented behavior and exact validation, keeping real-mailbox tests explicitly pending until user deployment. Do not merge or tag a release without the corresponding user instruction.
-- [ ] Provide user steps for one Gmail, one QQ and one personal Outlook account; test new delivery, no history, reconnect, restart, ntfy outage and isolated auth failure. Never request mailbox passwords/tokens in chat.
+- [x] Review spec coverage, credential leakage, cursor atomicity, URL validation, queue ownership and shutdown; investigate any failures before changing code. Each defect receives a reproducing regression test.
+- [x] Re-run only required affected checks, then complete full release checks once. Confirm GitHub CI on the actual latest commit and inspect logs when jobs fail.
+- [x] Open a feature PR with implemented behavior and exact validation, keeping real-mailbox tests explicitly pending until user deployment. Do not merge or tag a release without the corresponding user instruction.
+- [x] Provide user steps for one Gmail, one QQ and one personal Outlook account; test new delivery, no history, reconnect, restart, ntfy outage and isolated auth failure. Never request mailbox passwords/tokens in chat.
 - [ ] After user real-device results, record verified outcomes and fix reported failures before release readiness.
 
 ## Plan Self-Review

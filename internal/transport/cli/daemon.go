@@ -107,7 +107,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 	auth := app.NewAuthorizationService(oauth, s.GetAccount)
 	auth.OnComplete = super.Wake
 	defer auth.Close()
-	controlServer := control.NewServer(cfg.Socket, control.Services{Accounts: app.NewAccountService(s, s), Rules: app.NewRuleService(s), Authorization: auth, Store: s, Supervisor: super, Publisher: publisher})
+	controlServer := control.NewServer(cfg.Socket, control.Services{Accounts: app.NewAccountService(s, s), Rules: app.NewRuleService(s), Authorization: auth, Status: app.NewStatusService(s, super), Outbox: app.NewOutboxService(s), Notifications: app.NewNotificationService(s, publisher), Supervisor: super})
 	httpServer := &http.Server{Addr: cfg.Listen, Handler: health.Handler(super), ReadHeaderTimeout: 5 * time.Second}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

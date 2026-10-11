@@ -75,12 +75,13 @@ func (s *Supervisor) WithAccountStopped(ctx context.Context, id string, mutate f
 	}
 	return mutate()
 }
-func (s *Supervisor) Run(ctx context.Context) error {
+func (s *Supervisor) Run(ctx context.Context) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.running.Store(true)
 	defer s.running.Store(false)
 	sendErr := make(chan error, 1)
+	senderJoined := false
 	go func() { sendErr <- s.deliveries.Run(ctx, 4) }()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -101,16 +102,26 @@ func (s *Supervisor) Run(ctx context.Context) error {
 				c.Close()
 			}
 		}
+		if !senderJoined {
+			if err := <-sendErr; result == nil {
+				result = err
+			}
+		}
 	}()
 	for {
 		if e := s.reconcile(ctx); e != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return e
 		}
 		select {
 		case <-ctx.Done():
-			<-sendErr
-			return nil
+			e := <-sendErr
+			senderJoined = true
+			return e
 		case e := <-sendErr:
+			senderJoined = true
 			return e
 		case id := <-s.wake:
 			s.mu.Lock()

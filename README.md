@@ -38,7 +38,8 @@ Examples use fictitious addresses, domains and IDs; replace them locally. Secret
 - Invalid UIDVALIDITY or expired Graph state stops the account with `needs_resync`. `account resync --id ACCOUNT_ID --ignore-history` explicitly discards the uncertain interval and establishes a new baseline; queued jobs remain.
 - First matching rule wins, conditions within a rule use AND, and no match means notify with priority 3. Use account IDs for account filters.
 - `account pause/resume` changes scanning; queued notifications can still send while an account is paused. `account remove --id ACCOUNT_ID --yes` deletes the account, credentials, state and queued jobs.
-- `outbox list` shows delivery IDs/statuses without mail payloads (up to 1000 rows). `outbox retry --id JOB_ID` requeues an unsent failure. Updating ntfy configuration unblocks authentication failures.
+- `status` reports both per-account and global unsent counts (pending, blocked and failed). `outbox list --limit 100 --status failed --account ACCOUNT_ID` returns `{ "items": [...], "next_cursor": "..." }` without mail payloads; continue with `--after NEXT_CURSOR` and the same filters. Page size is 1–1000, default 100. `outbox retry --id JOB_ID` requeues an unsent failure. Updating ntfy configuration unblocks authentication failures.
+- Graceful shutdown releases each sender's claim so restart can retry immediately. A hard stop or failed cleanup still relies on the one-minute lease expiry. Claim tokens fence old senders from newer claims.
 
 ```sh
 ./dist/mailpulse --data-dir ./data rule add --order 10 --action ignore --domain ads.example.com

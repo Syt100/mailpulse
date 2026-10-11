@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type token struct{}
@@ -20,6 +21,19 @@ func server(t *testing.T, handler http.HandlerFunc) *Provider {
 	p := NewProvider(token{}, s.Client())
 	p.baseURL = s.URL
 	return p
+}
+
+func TestGraphRetryAfterHTTPDate(t *testing.T) {
+	until := time.Now().UTC().Add(2 * time.Minute).Truncate(time.Second)
+	p := server(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", until.Format(http.TimeFormat))
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	_, err := p.Scan(context.Background(), domain.Account{ID: "a"}, domain.Cursor{})
+	var pe *domain.ProviderError
+	if !errors.As(err, &pe) || pe.Code != "throttled" || pe.RetryAfter < 110*time.Second || pe.RetryAfter > 2*time.Minute {
+		t.Fatalf("HTTP-date throttle was not respected: %v", err)
+	}
 }
 func TestGraphInitialPaginationSilent(t *testing.T) {
 	var p *Provider

@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"github.com/Syt100/mailpulse/internal/app"
 	"github.com/Syt100/mailpulse/internal/domain"
-	"github.com/Syt100/mailpulse/internal/notify/ntfy"
-	"github.com/Syt100/mailpulse/internal/store/sqlite"
 	"io"
 	"net"
 	"net/http"
@@ -17,14 +15,6 @@ import (
 	"time"
 )
 
-type Store interface {
-	ListOutbox(context.Context) ([]sqlite.OutboxItem, error)
-	Retry(context.Context, string) error
-	Unblock(context.Context) error
-	Statuses(context.Context) ([]domain.AccountStatus, error)
-	CountPending(context.Context) (int, error)
-	Save(context.Context, string, []byte) error
-}
 type Supervisor interface {
 	Wake(string)
 	Ready() bool
@@ -34,9 +24,10 @@ type Services struct {
 	Accounts      *app.AccountService
 	Rules         *app.RuleService
 	Authorization *app.AuthorizationService
-	Store         Store
+	Status        *app.StatusService
+	Outbox        *app.OutboxService
+	Notifications *app.NotificationService
 	Supervisor    Supervisor
-	Publisher     domain.Publisher
 }
 type Request struct {
 	Method string          `json:"method"`
@@ -204,38 +195,26 @@ func (s *Server) dispatch(ctx context.Context, q Request) (any, error) {
 		}
 		return nil, sv.Rules.Remove(ctx, id.ID)
 	case "outbox.list":
-		return sv.Store.ListOutbox(ctx)
+		var query domain.OutboxQuery
+		if e := decode(q.Params, &query); e != nil {
+			return nil, e
+		}
+		return sv.Outbox.List(ctx, query)
 	case "outbox.retry":
 		if e := decode(q.Params, &id); e != nil {
 			return nil, e
 		}
-		return nil, sv.Store.Retry(ctx, id.ID)
+		return nil, sv.Outbox.Retry(ctx, id.ID)
 	case "notify.configure":
-		var cfg ntfy.Config
+		var cfg domain.NotificationConfig
 		if e := decode(q.Params, &cfg); e != nil {
 			return nil, e
 		}
-		if _, e := ntfy.NewClient(cfg.URL, cfg.Topic, nil, nil); e != nil {
-			return nil, e
-		}
-		raw, _ := json.Marshal(cfg)
-		if e := sv.Store.Save(ctx, "system:ntfy", raw); e != nil {
-			return nil, e
-		}
-		return nil, sv.Store.Unblock(ctx)
+		return nil, sv.Notifications.Configure(ctx, cfg)
 	case "notify.test":
-		return nil, sv.Publisher.Publish(ctx, domain.Notification{Title: "MailPulse 测试通知", Message: "邮箱通知推送连接正常。", Priority: 3})
+		return nil, sv.Notifications.Test(ctx)
 	case "status":
-		statuses, e := sv.Store.Statuses(ctx)
-		if e != nil {
-			return nil, e
-		}
-		n, e := sv.Store.CountPending(ctx)
-		return struct {
-			Accounts []domain.AccountStatus `json:"accounts"`
-			Pending  int                    `json:"pending_notifications"`
-			Ready    bool                   `json:"ready"`
-		}{statuses, n, sv.Supervisor.Ready()}, e
+		return sv.Status.Status(ctx)
 	}
 	return nil, fmt.Errorf("unknown method")
 }
